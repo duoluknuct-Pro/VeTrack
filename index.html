@@ -223,7 +223,7 @@
 
 <script>
 // GANTI DENGAN URL WEB APP GOOGLE APPS SCRIPT ANDA
-const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbz5pPQgePmAsA_HF2ZKYdw98hUfZhi7tLcCLMbPeOX1ceSy906G4HNs9jlYIAubRAvY/exec';
+const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbzH7XtXAgjmPjXNULcc7WksuO48rT065mhwU4GJrt-eoIIJqSVtRnR5-faCYCRfW-vd/exec';
 
 let timer = null;
 let deferredPrompt = null;
@@ -238,8 +238,7 @@ const SHIP_COLORS = {
   other: '#94a3b8'      // Abu-abu
 };
 
-// PETA BASEMAP STYLES (100% GRATIS TANPA API KEY DENGAN EFEK MODE GELAP)
-// PETA BASEMAP STYLES (100% GRATIS TANPA API KEY CARTO)
+// PETA BASEMAP STYLES
 const MAP_STYLES = {
   dark: {
     version: 8,
@@ -257,7 +256,6 @@ const MAP_STYLES = {
       type: 'raster',
       source: 'osm',
       paint: {
-        // Filter CSS bawaan MapLibre untuk mengubah OpenStreetMap terang menjadi mode gelap murni
         'raster-brightness-max': 0.6,
         'raster-contrast': 0.2,
         'raster-saturation': -0.7,
@@ -317,8 +315,9 @@ const map = new maplibregl.Map({
 applyThemeUI();
 map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
 
-map.on('style.load', () => {
-  addShipIcons();
+// PERBAIKAN: Menggunakan async/await dengan Promise.all untuk memastikan seluruh SVG dimuat
+map.on('style.load', async () => {
+  await addShipIcons();
   reloadAIS();
 });
 
@@ -330,23 +329,33 @@ function currentFilters() {
   };
 }
 
-// MEMBUAT IKON BERBEDA WARNA UNTUK TIAP JENIS KAPAL
+// MEMBUAT IKON BERBEDA WARNA UNTUK TIAP JENIS KAPAL (DENGAN PROMISE)
 function addShipIcons() {
-  Object.keys(SHIP_COLORS).forEach(key => {
-    const iconName = 'ship-icon-' + key;
-    if (map.hasImage(iconName)) return;
+  const promises = Object.keys(SHIP_COLORS).map(key => {
+    return new Promise((resolve) => {
+      const iconName = 'ship-icon-' + key;
+      if (map.hasImage(iconName)) return resolve();
 
-    const color = SHIP_COLORS[key];
-    const svg = 
-      `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">`+
-      `<path d="M32 3 L50 51 L41 58 L32 55 L23 58 L14 51 Z" fill="${color}" stroke="white" stroke-width="3"/>`+
-      `<path d="M32 10 L32 51" stroke="white" stroke-width="3"/>`+
-      `</svg>`;
+      const color = SHIP_COLORS[key];
+      const svg = 
+        `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">`+
+        `<path d="M32 3 L50 51 L41 58 L32 55 L23 58 L14 51 Z" fill="${color}" stroke="white" stroke-width="3"/>`+
+        `<path d="M32 10 L32 51" stroke="white" stroke-width="3"/>`+
+        `</svg>`;
 
-    const img = new Image(64, 64);
-    img.onload = () => map.addImage(iconName, img, { sdf: false });
-    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+      const img = new Image(64, 64);
+      img.onload = () => {
+        if (!map.hasImage(iconName)) {
+          map.addImage(iconName, img, { sdf: false });
+        }
+        resolve();
+      };
+      img.onerror = () => resolve();
+      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+    });
   });
+
+  return Promise.all(promises);
 }
 
 function removeAISLayer() {
@@ -367,7 +376,7 @@ function loadTiles(info) {
     maxzoom: info.maxzoom ?? 14
   });
 
-  // LOGIKA PEMILIHAN IKON BERDASARKAN SHIP TYPE AIS
+  // LOGIKA PEMILIHAN IKON BERDASARKAN SHIP TYPE AIS (DENGAN COALESCE & IGNORE PLACEMENT)
   map.addLayer({
     id: 'ais-vessels',
     type: 'symbol',
@@ -377,23 +386,24 @@ function loadTiles(info) {
       'icon-image': [
         'case',
         // Tanker (Type 80 - 89)
-        ['all', ['>=', ['to-number', ['get', 'type']], 80], ['<=', ['to-number', ['get', 'type']], 89]], 'ship-icon-tanker',
+        ['all', ['>=', ['to-number', ['coalesce', ['get', 'type'], 0]], 80], ['<=', ['to-number', ['coalesce', ['get', 'type'], 0]], 89]], 'ship-icon-tanker',
         // Passenger (Type 60 - 69)
-        ['all', ['>=', ['to-number', ['get', 'type']], 60], ['<=', ['to-number', ['get', 'type']], 69]], 'ship-icon-passenger',
+        ['all', ['>=', ['to-number', ['coalesce', ['get', 'type'], 0]], 60], ['<=', ['to-number', ['coalesce', ['get', 'type'], 0]], 69]], 'ship-icon-passenger',
         // Cargo (Type 70 - 79)
-        ['all', ['>=', ['to-number', ['get', 'type']], 70], ['<=', ['to-number', ['get', 'type']], 79]], 'ship-icon-cargo',
+        ['all', ['>=', ['to-number', ['coalesce', ['get', 'type'], 0]], 70], ['<=', ['to-number', ['coalesce', ['get', 'type'], 0]], 79]], 'ship-icon-cargo',
         // Fishing (Type 30)
-        ['==', ['to-number', ['get', 'type']], 30], 'ship-icon-fishing',
+        ['==', ['to-number', ['coalesce', ['get', 'type'], 0]], 30], 'ship-icon-fishing',
         // Special / Tug (Type 31-35, 50-59)
-        ['all', ['>=', ['to-number', ['get', 'type']], 31], ['<=', ['to-number', ['get', 'type']], 59]], 'ship-icon-special',
+        ['all', ['>=', ['to-number', ['coalesce', ['get', 'type'], 0]], 31], ['<=', ['to-number', ['coalesce', ['get', 'type'], 0]], 59]], 'ship-icon-special',
         // Default / Other
         'ship-icon-other'
       ],
       'icon-size': ['interpolate', ['linear'], ['zoom'], 3, 0.18, 6, 0.28, 9, 0.42, 14, 0.55],
-      'icon-rotate': ['coalesce', ['get', 'hdg'], ['get', 'heading'], ['get', 'cog'], 0],
+      'icon-rotate': ['coalesce', ['to-number', ['get', 'hdg']], ['to-number', ['get', 'heading']], ['to-number', ['get', 'cog']], 0],
       'icon-rotation-alignment': 'map',
       'icon-pitch-alignment': 'map',
-      'icon-allow-overlap': true
+      'icon-allow-overlap': true,
+      'icon-ignore-placement': true
     }
   });
 
